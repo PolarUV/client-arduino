@@ -14,6 +14,19 @@ constexpr uint16_t Port = 8888;
 
 EthernetUDP UDP;
 
+// ############################## Двигатели ##############################
+
+constexpr int16_t MotorCoefficients[6][6] =
+    {
+        // Fx    Fy    Fz   Mx   My  Mz
+        {0, -100, 100, 100, 100, 0},  // Двигатель 1
+        {100, 0, 0, 0, 0, -100},      // Двигатель 2
+        {0, 100, -100, 100, 100, 0},  // Двигатель 3
+        {0, 100, 100, -100, 100, 0},  // Двигатель 4
+        {-100, 0, 0, 0, 0, -100},     // Двигатель 5
+        {0, -100, -100, -100, 100, 0} // Двигатель 6
+};
+
 // ############################## USB ##############################
 
 uint16_t LastMessageCounter = -1;
@@ -25,8 +38,6 @@ PS5USB PS5(&USBPort);
 
 struct RequestPacketStruct
 {
-  // Режим работы робота
-  uint8_t Mode = 0;
   // Координаты стиков
   uint8_t LeftStickX = 127;
   uint8_t LeftStickY = 127;
@@ -43,14 +54,7 @@ struct ResponsePacketStruct
 {
   uint8_t state;
 };
-
-enum Mode
-{
-  RemoteControl,
-  Stabilization,
-  Parking
-};
-uint8_t CurrentMode = Mode::RemoteControl;
+uint8_t RobotState{};
 
 // ############################## Setup ##############################
 
@@ -62,48 +66,50 @@ void setup()
   // Запуск Ethernet
   Ethernet.begin(Mac, RemoteIP);
 
-  // Open serial communications and wait for port to open:
-  #ifdef DEBUG
-  Serial.begin(9600);
-  while (!Serial);
-  #endif
+// Open serial communications and wait for port to open:
+#ifdef DEBUG
+  Serial.begin(115200);
+  while (!Serial)
+    ;
+#endif
 
-  // Check for Ethernet hardware status
-  #ifdef DEBUG
+// Check for Ethernet hardware status
+#ifdef DEBUG
   Serial.print("Ethernet hardware status: ");
-  #endif
+#endif
   if (Ethernet.hardwareStatus() == EthernetNoHardware)
   {
-  #ifdef DEBUG
+#ifdef DEBUG
     Serial.println("no hardware");
     Serial.println("ERROR. Stopping program...");
-  #endif
-    while(1);
+#endif
+    while (1)
+      ;
   }
   else
   {
-  #ifdef DEBUG
+#ifdef DEBUG
     Serial.println("ethernet controller found");
-  #endif
+#endif
   }
 
-  #ifdef DEBUG
+#ifdef DEBUG
   // Check for ethernet cable status
   Serial.print("Ethernet cable status: ");
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
   switch (linkStatus)
   {
-    case LinkON:
-      Serial.println("cable found");
-      break;
-    case LinkOFF:
-      Serial.println("no cable");
-      break;
-    case Unknown:
-      Serial.println("unknown");
-      break;
+  case LinkON:
+    Serial.println("cable found");
+    break;
+  case LinkOFF:
+    Serial.println("no cable");
+    break;
+  case Unknown:
+    Serial.println("unknown");
+    break;
   }
-  #endif
+#endif
 
   // Инициализация UDP
   UDP.begin(Port);
@@ -111,15 +117,16 @@ void setup()
   // Инициализация USB
   if (USBPort.Init() == -1)
   {
-  #ifdef DEBUG
+#ifdef DEBUG
     Serial.println("ERROR. Can't initialize USB");
-  #endif
-    while (1);
+#endif
+    while (1)
+      ;
   }
 
-  #ifdef DEBUG
+#ifdef DEBUG
   Serial.println("Setup completed");
-  #endif
+#endif
 }
 
 // ############################## Loop ##############################
@@ -132,85 +139,84 @@ void loop()
   {
     LastMessageCounter = PS5.getMessageCounter();
 
-    // Создание пакета
-    RequestPacketStruct requestPacket;
-
-    // Считывание состояния геймпада
-    uint8_t leftStickX = PS5.getAnalogHat(AnalogHatEnum::LeftHatX);
-    uint8_t leftStickY = PS5.getAnalogHat(AnalogHatEnum::LeftHatY);
-    uint8_t rightStickX = PS5.getAnalogHat(AnalogHatEnum::RightHatX);
-    uint8_t rightStickY = PS5.getAnalogHat(AnalogHatEnum::RightHatY);
-    uint8_t buttonL2 = PS5.getAnalogButton(ButtonEnum::L2);
-    uint8_t buttonR2 = PS5.getAnalogButton(ButtonEnum::R2);
-
-    // Заполнение пакета
-    if (PS5.getButtonClick(ButtonEnum::TRIANGLE))
+    if (RobotState != 'S' && RobotState != 'W')
     {
-      if (CurrentMode != Mode::Stabilization) CurrentMode = Mode::Stabilization;
+      // Упаковка пакета
+      char buffer[sizeof(MotorCoefficients)];
+      memcpy(buffer, &MotorCoefficients, sizeof(MotorCoefficients));
+
+      // Отправка пакета
+      UDP.beginPacket(RobotIP, Port);
+      UDP.write(buffer, sizeof(buffer));
+      UDP.endPacket();
+
+#ifdef DEBUG
+      Serial.println("Coefficients packet sent");
+#endif
     }
-    else if (PS5.getButtonClick(ButtonEnum::SQUARE))
+    else
     {
-      if (CurrentMode != Mode::Parking) CurrentMode = Mode::Parking;
+      // Создание пакета
+      RequestPacketStruct requestPacket;
+
+      // Считывание состояния геймпада
+      uint8_t leftStickX = PS5.getAnalogHat(AnalogHatEnum::LeftHatX);
+      uint8_t leftStickY = PS5.getAnalogHat(AnalogHatEnum::LeftHatY);
+      uint8_t rightStickX = PS5.getAnalogHat(AnalogHatEnum::RightHatX);
+      uint8_t rightStickY = PS5.getAnalogHat(AnalogHatEnum::RightHatY);
+      uint8_t buttonL2 = PS5.getAnalogButton(ButtonEnum::L2);
+      uint8_t buttonR2 = PS5.getAnalogButton(ButtonEnum::R2);
+
+      // Заполнение пакета
+      requestPacket.LeftStickX = (117 < leftStickX && leftStickX < 137) ? 127 : leftStickX;
+      requestPacket.LeftStickY = (117 < leftStickY && leftStickY < 137) ? 127 : leftStickY;
+      requestPacket.RightStickX = (117 < rightStickX && rightStickX < 137) ? 127 : rightStickX;
+      requestPacket.RightStickY = (117 < rightStickY && rightStickY < 137) ? 127 : rightStickY;
+      requestPacket.ButtonL1 = PS5.getButtonPress(L1);
+      requestPacket.ButtonL2 = (117 < buttonL2 && buttonL2 < 137) ? 127 : buttonL2;
+      requestPacket.ButtonR1 = PS5.getButtonPress(R1);
+      requestPacket.ButtonR2 = (117 < buttonR2 && buttonR2 < 137) ? 127 : buttonR2;
+
+      // Упаковка пакета
+      char buffer[sizeof(RequestPacketStruct)];
+      memcpy(buffer, &requestPacket, sizeof(RequestPacketStruct));
+
+      // Отправка пакета
+      UDP.beginPacket(RobotIP, Port);
+      UDP.write(buffer, sizeof(buffer));
+      UDP.endPacket();
+
+#ifdef DEBUG
+      Serial.println("Commands packet sent");
+#endif
     }
-    else if (PS5.getButtonClick(ButtonEnum::CROSS))
-    {
-      if (CurrentMode != Mode::RemoteControl) CurrentMode = Mode::RemoteControl;
-    }
-    
-    requestPacket.Mode = CurrentMode;
-    requestPacket.LeftStickX = (117 < leftStickX && leftStickX < 137) ? 127 : leftStickX;
-    requestPacket.LeftStickY = (117 < leftStickY && leftStickY < 137) ? 127 : leftStickY;
-    requestPacket.RightStickX = (117 < rightStickX && rightStickX < 137) ? 127 : rightStickX;
-    requestPacket.RightStickY = (117 < rightStickY && rightStickY < 137) ? 127 : rightStickY;
-    requestPacket.ButtonL1 = PS5.getButtonPress(L1);
-    requestPacket.ButtonL2 = (117 < buttonL2 && buttonL2 < 137) ? 127 : buttonL2;
-    requestPacket.ButtonR1 = PS5.getButtonPress(R1);
-    requestPacket.ButtonR2 = (117 < buttonR2 && buttonR2 < 137) ? 127 : buttonR2;
 
-    // Упаковка пакета
-    char buffer[sizeof(RequestPacketStruct)];
-    memcpy(buffer, &requestPacket, sizeof(RequestPacketStruct));
-
-    // Отправка пакета
-    UDP.beginPacket(RobotIP, Port);
-    UDP.write(buffer,sizeof(buffer));
-    UDP.endPacket();
-
-    #ifdef DEBUG
-    Serial.println("Packet sent");
-    #endif
-
+    RobotState = '0';
     // Прием ответа от робота
-    char replyBuffer;
     int packetSize = UDP.parsePacket();
     if (packetSize)
     {
-      UDP.read(&replyBuffer, 1);
+      UDP.read(&RobotState, 1);
     }
 
     // Расшифровка ответа от робота
-    switch (replyBuffer)
+    switch (RobotState)
     {
-      case 'R':
-      {
-        PS5.setLed(ColorsEnum::Green);
-        break;
-      }
-      case 'S':
-      {
-        PS5.setLed(ColorsEnum::Blue);
-        break;
-      }
-      case 'P':
-      {
-        PS5.setLed(ColorsEnum::White);
-        break;
-      }
-      default:
-      {
-        PS5.setLed(ColorsEnum::Red);
-        break;
-      }
+    case 'W':
+    {
+      PS5.setLed(ColorsEnum::Green);
+      break;
+    }
+    case 'S':
+    {
+      PS5.setLed(ColorsEnum::Blue);
+      break;
+    }
+    default:
+    {
+      PS5.setLed(ColorsEnum::Red);
+      break;
+    }
     }
   }
 
