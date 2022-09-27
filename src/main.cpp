@@ -7,7 +7,7 @@
 
 // ############################## Ethernet ##############################
 
-const byte Mac[] = {0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA};
+constexpr byte Mac[] = {0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA};
 const IPAddress RobotIP(192, 168, 1, 1);
 const IPAddress RemoteIP(192, 168, 1, 2);
 constexpr uint16_t Port = 8888;
@@ -141,13 +141,11 @@ void loop()
 
     if (RobotState != 'S' && RobotState != 'W')
     {
-      // Упаковка пакета
-      char buffer[sizeof(MotorCoefficients)];
-      memcpy(buffer, &MotorCoefficients, sizeof(MotorCoefficients));
-
       // Отправка пакета
+      const auto* buffer = reinterpret_cast<const char*>(MotorCoefficients);
+      constexpr static auto bufferSize = sizeof(MotorCoefficients);
       UDP.beginPacket(RobotIP, Port);
-      UDP.write(buffer, sizeof(buffer));
+      UDP.write(buffer, bufferSize);
       UDP.endPacket();
 
 #ifdef DEBUG
@@ -156,18 +154,16 @@ void loop()
     }
     else
     {
+      // Считывание состояния геймпада
+      const uint8_t leftStickX = PS5.getAnalogHat(AnalogHatEnum::LeftHatX);
+      const uint8_t leftStickY = PS5.getAnalogHat(AnalogHatEnum::LeftHatY);
+      const uint8_t rightStickX = PS5.getAnalogHat(AnalogHatEnum::RightHatX);
+      const uint8_t rightStickY = PS5.getAnalogHat(AnalogHatEnum::RightHatY);
+      const uint8_t buttonL2 = PS5.getAnalogButton(ButtonEnum::L2);
+      const uint8_t buttonR2 = PS5.getAnalogButton(ButtonEnum::R2);
+
       // Создание пакета
       RequestPacketStruct requestPacket;
-
-      // Считывание состояния геймпада
-      uint8_t leftStickX = PS5.getAnalogHat(AnalogHatEnum::LeftHatX);
-      uint8_t leftStickY = PS5.getAnalogHat(AnalogHatEnum::LeftHatY);
-      uint8_t rightStickX = PS5.getAnalogHat(AnalogHatEnum::RightHatX);
-      uint8_t rightStickY = PS5.getAnalogHat(AnalogHatEnum::RightHatY);
-      uint8_t buttonL2 = PS5.getAnalogButton(ButtonEnum::L2);
-      uint8_t buttonR2 = PS5.getAnalogButton(ButtonEnum::R2);
-
-      // Заполнение пакета
       requestPacket.LeftStickX = (117 < leftStickX && leftStickX < 137) ? 127 : leftStickX;
       requestPacket.LeftStickY = (117 < leftStickY && leftStickY < 137) ? 127 : leftStickY;
       requestPacket.RightStickX = (117 < rightStickX && rightStickX < 137) ? 127 : rightStickX;
@@ -178,12 +174,11 @@ void loop()
       requestPacket.ButtonR2 = (117 < buttonR2 && buttonR2 < 137) ? 127 : buttonR2;
 
       // Упаковка пакета
-      char buffer[sizeof(RequestPacketStruct)];
-      memcpy(buffer, &requestPacket, sizeof(RequestPacketStruct));
-
+      auto* buffer = reinterpret_cast<char*>( &requestPacket);
+      static constexpr auto buffer_size = sizeof(requestPacket);
       // Отправка пакета
       UDP.beginPacket(RobotIP, Port);
-      UDP.write(buffer, sizeof(buffer));
+      UDP.write(buffer, buffer_size);
       UDP.endPacket();
 
 #ifdef DEBUG
@@ -193,8 +188,7 @@ void loop()
 
     RobotState = '0';
     // Прием ответа от робота
-    int packetSize = UDP.parsePacket();
-    if (packetSize)
+    if (UDP.parsePacket())
     {
       UDP.read(&RobotState, 1);
     }
